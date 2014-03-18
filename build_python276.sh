@@ -195,7 +195,7 @@ build_python27() {
 	pybuild_bsdbm
 	pybuild_python
 	install_distribute
-	rm_downloaded_pkgs
+	clean_downloaded_pkgs
 }
 
 build_python27
