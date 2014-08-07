@@ -113,6 +113,7 @@ config_invenio() {
 	inveniomanage config set CFG_SITE_URL http://0.0.0.0:4000
 	inveniomanage config set CFG_SITE_SECURE_URL http://0.0.0.0:4000
 	inveniomanage config set COLLECT_STORAGE invenio.ext.collect.storage.link
+	npm install less clean-css requirejs uglify-js
 	inveniomanage config set LESS_BIN `find $PWD/node_modules -iname lessc | head -1`
 	inveniomanage config set CLEANCSS_BIN `find $PWD/node_modules -iname cleancss | head -1`
 	inveniomanage config set REQUIREJS_BIN `find $PWD/node_modules -iname r.js | head -1`
