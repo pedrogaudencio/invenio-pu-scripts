@@ -75,6 +75,7 @@ create_workenv() {
 
 	workon $VIRTUALENV || source $WORKON_HOME/$VIRTUALENV/bin/activate
 	cdvirtualenv
+	mkdir -p var/run/
 	mkdir src; cd src
 	$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $BRANCH
 }
@@ -84,6 +85,7 @@ install_invenio() {
 	cd invenio
 	pip install -r requirements.txt
 	pip install -e .
+	pip install ipython
 	python setup.py compile_catalog
 }
 
@@ -112,6 +114,7 @@ config_invenio() {
 	inveniomanage config set CFG_DATABASE_USER $BRANCH
 	inveniomanage config set CFG_SITE_URL http://0.0.0.0:4000
 	inveniomanage config set CFG_SITE_SECURE_URL http://0.0.0.0:4000
+	inveniomanage config set CFG_BIBSCHED_NON_CONCURRENT_TASKS "[]"
 	inveniomanage config set COLLECT_STORAGE invenio.ext.collect.storage.link
 	npm install less clean-css requirejs uglify-js
 	inveniomanage config set LESS_BIN `find $PWD/node_modules -iname lessc | head -1`
