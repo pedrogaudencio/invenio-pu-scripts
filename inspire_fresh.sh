@@ -4,6 +4,7 @@
 # Tested on Ubuntu 13.04
 # Pedro Gaudêncio <pedro.gaudencio@cern.ch>
 
+configfile=fresh.cfg
 BRANCH=pu
 #set -e
 
@@ -19,8 +20,6 @@ while getopts :h:v:d: option; do
 			h) echo "$usage"; exit;;
 			v) VIRTUALENV=${OPTARG};;
 			d) DATABASE_NAME=${OPTARG};;
-			#r2) REPO_INSPIRE=${OPTARG};;
-			#b2) BRANCH_INSPIRE=${OPTARG};;
         esac
 done
 shift $((OPTIND - 1))
@@ -30,14 +29,35 @@ activate_venvwrapper () {
 	source `which virtualenvwrapper.sh` || source "/usr/local/bin/virtualenvwrapper.sh"
 }
 
+source_cfg_file() {
+	# check if the file contains something we don't want
+	if egrep -q -v '^#|^[^ ]*=[^;]*' "$configfile"; then
+	  echo "Config file is unclean, cleaning it..." >&2
+	  # filter the original to a new file
+	  egrep '^#|^[^ ]*=[^;&]*'  "$configfile" > "$configfile_secured"
+	  configfile="$configfile_secured"
+	fi
+
+	# now source it, either the original or the filtered variant
+	source "$configfile"
+}
+
 create_vars() {
 	echo "Creating path variables..."
 	if [ ! $VIRTUALENV ]; then
-		VIRTUALENV="invenio"
+		if [ ! $virtual_env ]; then
+			VIRTUALENV="invenio"
+		else
+			VIRTUALENV=$virtual_env
+		fi
 	fi
 
 	if [ ! $DATABASE_NAME ]; then
-		DATABASE_NAME=$BRANCH
+		if [ ! $db_name ]; then
+			DATABASE_NAME=$BRANCH
+		else
+			DATABASE_NAME=$db_name
+		fi
 	fi
 }
 
@@ -63,8 +83,29 @@ create_workenv() {
 		cd $HOME/src/
 	fi
 
-	if [ ! -d $HOME/src/invenio ]; then
-		git clone --branch $BRANCH git://github.com/inveniosoftware/invenio.git
+	#TODO: check if this works properly
+	if [[ $repo_invenio && $branch_invenio && $repo_invenio_remote_name ]]; then
+		if [ ! -d $HOME/src/invenio ]; then
+			git clone --branch $branch_invenio $repo_invenio
+		else
+			cd $HOME/src/invenio
+			branch_exists=`git show-ref refs/heads/$branch_invenio`
+
+			if [[ $repo_invenio == "$(git ls-remote --get-url)" && -n "$branch_exists" ]]; then
+				if [ $branch_invenio != "$(git symbolic-ref --short HEAD 2>/dev/null)"]; then
+					git checkout $branch_invenio
+				fi
+			else
+				git remote add $repo_invenio_remote_name $repo_invenio
+				git fetch $repo_invenio_remote_name $branch_invenio
+				git checkout $repo_invenio_remote_name/$branch_invenio
+				git checkout -b $branch_invenio
+			fi
+		fi
+	else
+		if [ ! -d $HOME/src/invenio ]; then
+			git clone --branch $BRANCH git://github.com/inveniosoftware/invenio.git
+		fi
 	fi
 
 	if [ ! -d $WORKON_HOME/$VIRTUALENV ]; then
@@ -85,7 +126,9 @@ install_invenio() {
 	cd invenio
 	pip install -r requirements.txt
 	pip install -e .
-	pip install ipython
+	if [ $install_ipython == true ]; then
+		pip install ipython
+	fi
 	python setup.py compile_catalog
 }
 
@@ -93,8 +136,28 @@ install_inspire() {
 	echo "Installing Inspire..."
 	cd $HOME/src
 
-	if [ ! -d $HOME/src/inspire-next ]; then
-		git clone git@github.com:inspirehep/inspire-next.git
+	#TODO: check if this works properly
+	if [[ $repo_inspire && $branch_inspire && $repo_inspire_remote_name ]]; then
+		if [ ! -d $HOME/src/invenio ]; then
+			git clone --branch $branch_inspire $repo_inspire
+		else
+			cd $HOME/src/inspire-next
+			branch_exists=`git show-ref refs/heads/$branch_inspire`
+			if [[ $repo_inspire == "$(git ls-remote --get-url)" && -n "$branch_exists" ]]; then
+				if [ $branch_inspire != "$(git symbolic-ref --short HEAD 2>/dev/null)"]; then
+					git checkout $branch_inspire
+				fi
+			else
+				git remote add $repo_inspire_remote_name $repo_inspire
+				git fetch $repo_inspire_remote_name $branch_inspire
+				git checkout $repo_inspire_remote_name/$branch_inspire
+				git checkout -b $branch_inspire
+			fi
+		fi
+	else
+		if [ ! -d $HOME/src/invenio ]; then
+			git clone git@github.com:inspirehep/inspire-next.git
+		fi
 	fi
 
 	cdvirtualenv src/
@@ -128,9 +191,22 @@ config_invenio() {
 populate_inspire() {
 	echo "Configuring Inspire..."
 	inveniomanage collect
-	inveniomanage database init --yes-i-know --user=root --password=mysql
+	if [ $mysql_root_passwd ]; then
+		inveniomanage database init --yes-i-know --user=root --password=$mysql_root_passwd
+	else
+		inveniomanage database init --yes-i-know --user=root --password=mysql
+	fi
 	inveniomanage demosite create -p inspire.base
 	inveniomanage demosite populate -p inspire.base -f inspire/testsuite/data/demo-records.xml
+}
+
+config_git() {
+	if [ $git_mail ]; then
+		cdvirtualenv src/invenio
+		git config user.email "$git_mail"
+		cdvirtualenv src/inspire-next
+		git config user.email "$git_mail"
+	fi
 }
 
 install_fresh_inspire() {
@@ -142,6 +218,7 @@ install_fresh_inspire() {
 	install_inspire
 	config_invenio
 	populate_inspire
+	config_git
 	printf "\n\nFinished. Enjoy your Inspire instalation!\n\n"
 }
 
