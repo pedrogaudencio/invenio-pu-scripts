@@ -4,6 +4,7 @@
 # Tested on Ubuntu 13.04
 # Pedro Gaudêncio <pedro.gaudencio@cern.ch>
 
+configfile=fresh.cfg
 BRANCH=pu
 #set -e
 
@@ -28,14 +29,35 @@ activate_venvwrapper () {
 	source `which virtualenvwrapper.sh` || source "/usr/local/bin/virtualenvwrapper.sh"
 }
 
+source_cfg_file() {
+	# check if the file contains something we don't want
+	if egrep -q -v '^#|^[^ ]*=[^;]*' "$configfile"; then
+	  echo "Config file is unclean, cleaning it..." >&2
+	  # filter the original to a new file
+	  egrep '^#|^[^ ]*=[^;&]*'  "$configfile" > "$configfile_secured"
+	  configfile="$configfile_secured"
+	fi
+
+	# now source it, either the original or the filtered variant
+	source "$configfile"
+}
+
 create_vars() {
 	echo "Creating path variables..."
 	if [ ! $VIRTUALENV ]; then
-		VIRTUALENV="invenio"
+		if [ ! $virtual_env ]; then
+			VIRTUALENV="invenio"
+		else
+			VIRTUALENV=$virtual_env
+		fi
 	fi
 
 	if [ ! $DATABASE_NAME ]; then
-		DATABASE_NAME=$BRANCH
+		if [ ! $db_name ]; then
+			DATABASE_NAME=$BRANCH
+		else
+			DATABASE_NAME=$db_name
+		fi
 	fi
 }
 
@@ -61,12 +83,29 @@ create_workenv() {
 		cd $HOME/src/
 	fi
 
-	if [ ! -d $HOME/src/invenio ]; then
-		git clone --branch $BRANCH git://github.com/inveniosoftware/invenio.git
-	fi
+	#TODO: check if this works properly
+	if [[ $repo_invenio && $branch_invenio && $repo_invenio_remote_name ]]; then
+		if [ ! -d $HOME/src/invenio ]; then
+			git clone --branch $branch_invenio $repo_invenio
+		else
+			cd $HOME/src/invenio
+			branch_exists=`git show-ref refs/heads/$branch_invenio`
 
-	if [ ! -d $HOME/src/invenio-demosite ]; then
-		git clone --branch $BRANCH git://github.com/inveniosoftware/invenio-demosite.git
+			if [[ $repo_invenio == "$(git ls-remote --get-url)" && -n "$branch_exists" ]]; then
+				if [ $branch_invenio != "$(git symbolic-ref --short HEAD 2>/dev/null)"]; then
+					git checkout $branch_invenio
+				fi
+			else
+				git remote add $repo_invenio_remote_name $repo_invenio
+				git fetch $repo_invenio_remote_name $branch_invenio
+				git checkout $repo_invenio_remote_name/$branch_invenio
+				git checkout -b $branch_invenio
+			fi
+		fi
+	else
+		if [ ! -d $HOME/src/invenio ]; then
+			git clone --branch $BRANCH git://github.com/inveniosoftware/invenio.git
+		fi
 	fi
 
 	if [ ! -d $WORKON_HOME/$VIRTUALENV ]; then
@@ -77,7 +116,7 @@ create_workenv() {
 
 	workon $VIRTUALENV || source $WORKON_HOME/$VIRTUALENV/bin/activate
 	cdvirtualenv
-	mkdir var/run/
+	mkdir -p var/run/
 	mkdir src; cd src
 	$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $BRANCH
 	$HOME/bin/git-new-workdir $HOME/src/invenio-demosite/ invenio-demosite $BRANCH
@@ -88,12 +127,13 @@ install_invenio() {
 	cd invenio
 	pip install -r requirements.txt
 	pip install -e .
-	pip install ipython
-	python setup.py compile_catalog
-	npm install
-	bower install
-	grunt
-	inveniomanage collect
+	if [ $install_ipython == true ]; then
+		pip install ipython
+	fi
+	if [ $unit_tests == true ]; then
+		pip install nose Flask-Testing httpretty
+	fi
+	python setup.py compile_catalog	npm install
 }
 
 install_demosite() {
@@ -116,6 +156,7 @@ config_invenio() {
 	inveniomanage config set CFG_SITE_SECURE_URL http://0.0.0.0:4000
 	inveniomanage config set CFG_BIBSCHED_NON_CONCURRENT_TASKS "[]"
 	inveniomanage config set COLLECT_STORAGE invenio.ext.collect.storage.link
+	npm install less clean-css requirejs uglify-js
 	inveniomanage config set LESS_BIN `find $PWD/node_modules -iname lessc | head -1`
 	inveniomanage config set CLEANCSS_BIN `find $PWD/node_modules -iname cleancss | head -1`
 	inveniomanage config set REQUIREJS_BIN `find $PWD/node_modules -iname r.js | head -1`
@@ -127,13 +168,27 @@ config_invenio() {
 setup_demosite() {
 	echo "Setting up Invenio-Demosite..."
 	cdvirtualenv src/invenio-demosite/
-	inveniomanage database init --user=root --password=mysql --yes-i-know
+	inveniomanage collect
+	if [ $mysql_root_passwd ]; then
+		inveniomanage database init --user=root --password=$mysql_root_passwd --yes-i-know
+	else
+		inveniomanage database init --user=root --password=mysql --yes-i-know
+	fi
 	inveniomanage database create
-	inveniomanage demosite create --packages=invenio_demosite.base
+}
+
+config_git() {
+	if [ $git_mail ]; then
+		cdvirtualenv src/invenio
+		git config user.email "$git_mail"
+		cdvirtualenv src/inspire-next
+		git config user.email "$git_mail"
+	fi
 }
 
 install_fresh_invenio_demosite() {
 	activate_venvwrapper
+	source_cfg_file
 	create_vars
 	create_workdirs
 	create_workenv
@@ -141,6 +196,7 @@ install_fresh_invenio_demosite() {
 	install_demosite
 	config_invenio
 	setup_demosite
+	config_git
 	printf "\n\nFinished. Enjoy your Invenio demosite instalation!\n\n"
 }
 
