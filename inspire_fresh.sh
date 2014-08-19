@@ -15,7 +15,7 @@ where:
     -v  set name for the virtualenv (default: invenio)
     -d  set name for the database (default: pu)"
 
-while getopts :h:v:d: option; do
+while getopts ':hvd:' option; do
         case "${option}" in
 			h) echo "$usage"; exit;;
 			v) VIRTUALENV=${OPTARG};;
@@ -52,11 +52,11 @@ create_vars() {
 		fi
 	fi
 
-	if [ ! $DATABASE_NAME ]; then
-		if [ ! $db_name ]; then
+	if [ $use_previous_db ]; then
+		DATABASE_NAME=$use_previous_db
+	else
+		if [ ! $DATABASE_NAME ]; then
 			DATABASE_NAME=$BRANCH
-		else
-			DATABASE_NAME=$db_name
 		fi
 	fi
 }
@@ -83,17 +83,23 @@ create_workenv() {
 		cd $HOME/src/
 	fi
 
-	#TODO: check if this works properly
-	if [[ $repo_invenio && $branch_invenio && $repo_invenio_remote_name ]]; then
+	if [ $repo_invenio ] && [ $branch_invenio ] && [ $repo_invenio_remote_name ]; then
 		if [ ! -d $HOME/src/invenio ]; then
 			git clone --branch $branch_invenio $repo_invenio
 		else
 			cd $HOME/src/invenio
-			branch_exists=`git show-ref refs/heads/$branch_invenio`
-
-			if [[ $repo_invenio == "$(git ls-remote --get-url)" && -n "$branch_exists" ]]; then
-				if [ $branch_invenio != "$(git symbolic-ref --short HEAD 2>/dev/null)"]; then
-					git checkout $branch_invenio
+			# if remote exists
+			if [[ "$(git remote | grep $repo_invenio_remote_name)" ]]; then
+				# if wanted repo is the current one and branch exists
+				branch_exists=`git show-ref refs/heads/$branch_invenio`
+				if [[ $repo_invenio == "$(git ls-remote --get-url)" ]] && [ -n "$branch_exists" ]; then
+					if [[ $branch_invenio != "$(git symbolic-ref --short HEAD 2>/dev/null)" ]]; then
+						git checkout $branch_invenio
+					fi
+				else
+					git fetch $repo_invenio_remote_name $branch_invenio
+					git checkout $repo_invenio_remote_name/$branch_invenio
+					git checkout -b $branch_invenio
 				fi
 			else
 				git remote add $repo_invenio_remote_name $repo_invenio
@@ -118,7 +124,11 @@ create_workenv() {
 	cdvirtualenv
 	mkdir -p var/run/
 	mkdir src; cd src
-	$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $BRANCH
+	if [ $branch_invenio ]; then
+		$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $branch_invenio
+	else
+		$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $BRANCH
+	fi
 }
 
 install_invenio() {
@@ -129,6 +139,9 @@ install_invenio() {
 	if [ $install_ipython == true ]; then
 		pip install ipython
 	fi
+	if [ $unit_tests == true ]; then
+		pip install nose Flask-Testing httpretty
+	fi
 	python setup.py compile_catalog
 }
 
@@ -136,16 +149,23 @@ install_inspire() {
 	echo "Installing Inspire..."
 	cd $HOME/src
 
-	#TODO: check if this works properly
-	if [[ $repo_inspire && $branch_inspire && $repo_inspire_remote_name ]]; then
+	if [ $repo_inspire ] && [ $branch_inspire ] && [ $repo_inspire_remote_name ]; then
 		if [ ! -d $HOME/src/invenio ]; then
 			git clone --branch $branch_inspire $repo_inspire
 		else
 			cd $HOME/src/inspire-next
-			branch_exists=`git show-ref refs/heads/$branch_inspire`
-			if [[ $repo_inspire == "$(git ls-remote --get-url)" && -n "$branch_exists" ]]; then
-				if [ $branch_inspire != "$(git symbolic-ref --short HEAD 2>/dev/null)"]; then
-					git checkout $branch_inspire
+			# if remote exists
+			if [[ "$(git remote | grep $repo_inspire_remote_name)" ]]; then
+				# if wanted repo is the current one and branch exists
+				branch_exists=`git show-ref refs/heads/$branch_inspire`
+				if [[ $repo_inspire == "$(git ls-remote --get-url)" ]] && [ -n "$branch_exists" ]; then
+					if [[ $branch_inspire != "$(git symbolic-ref --short HEAD 2>/dev/null)" ]]; then
+						git checkout $branch_inspire
+					fi
+				else
+					git fetch $repo_inspire_remote_name $branch_inspire
+					git checkout $repo_inspire_remote_name/$branch_inspire
+					git checkout -b $branch_inspire
 				fi
 			else
 				git remote add $repo_inspire_remote_name $repo_inspire
@@ -155,14 +175,14 @@ install_inspire() {
 			fi
 		fi
 	else
-		if [ ! -d $HOME/src/invenio ]; then
+		if [ ! -d $HOME/src/inspire-next ]; then
 			git clone git@github.com:inspirehep/inspire-next.git
 		fi
 	fi
 
 	cdvirtualenv src/
-	$HOME/bin/git-new-workdir $HOME/src/inspire-next/ inspire
-	cd inspire
+	$HOME/bin/git-new-workdir $HOME/src/inspire-next/ inspire-next
+	cd inspire-next
 	pip install -r requirements.txt --exists-action i
 	inveniomanage bower -i bower-base.json > bower.json
 	bower install
@@ -191,13 +211,15 @@ config_invenio() {
 populate_inspire() {
 	echo "Configuring Inspire..."
 	inveniomanage collect
-	if [ $mysql_root_passwd ]; then
-		inveniomanage database init --yes-i-know --user=root --password=$mysql_root_passwd
-	else
-		inveniomanage database init --yes-i-know --user=root --password=mysql
+	if [ ! $use_previous_db ]; then
+		if [ $mysql_root_passwd ]; then
+			inveniomanage database init --yes-i-know --user=root --password=$mysql_root_passwd
+		else
+			inveniomanage database init --yes-i-know --user=root --password=mysql
+		fi
+		#inveniomanage database create
+		inveniomanage demosite populate -p inspire.base -f inspire/testsuite/data/demo-records.xml
 	fi
-	inveniomanage demosite create -p inspire.base
-	inveniomanage demosite populate -p inspire.base -f inspire/testsuite/data/demo-records.xml
 }
 
 config_git() {
@@ -211,6 +233,7 @@ config_git() {
 
 install_fresh_inspire() {
 	activate_venvwrapper
+	source_cfg_file
 	create_vars
 	create_workdirs
 	create_workenv
