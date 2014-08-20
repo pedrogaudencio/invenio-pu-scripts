@@ -206,6 +206,13 @@ config_invenio() {
 	inveniomanage config set UGLIFYJS_BIN `find $PWD/node_modules -iname uglifyjs | head -1`
 	inveniomanage config set REQUIREJS_RUN_IN_DEBUG False
 	inveniomanage config set DEBUG True
+	inveniomanage config set ASSETS_DEBUG True
+	inveniomanage config set DEBUG_TB_INTERCEPT_REDIRECTS False
+	inveniomanage config set DOI_SEARCH_PREFIX "u'doi:'"
+	inveniomanage config set ARXIV_SEARCH_PREFIX "u'035__a:oai:arXiv.org:'"
+	#TODO: add extensions:
+	#from invenio.base.config import EXTENSIONS as _EXTENSIONS
+	#inveniomanage config set EXTENSIONS "_EXTENSIONS + ['invenio.ext.arxiv:Arxiv', 'invenio.ext.crossref:CrossRef']"
 }
 
 populate_inspire() {
