@@ -15,7 +15,7 @@ where:
     -v  set name for the virtualenv (default: invenio)
     -d  set name for the database (default: pu)"
 
-while getopts :h:v:d: option; do
+while getopts ':hvd:' option; do
         case "${option}" in
 			h) echo "$usage"; exit;;
 			v) VIRTUALENV=${OPTARG};;
@@ -52,11 +52,11 @@ create_vars() {
 		fi
 	fi
 
-	if [ ! $DATABASE_NAME ]; then
-		if [ ! $db_name ]; then
+	if [ $use_previous_db ]; then
+		DATABASE_NAME=$use_previous_db
+	else
+		if [ ! $DATABASE_NAME ]; then
 			DATABASE_NAME=$BRANCH
-		else
-			DATABASE_NAME=$db_name
 		fi
 	fi
 }
@@ -83,17 +83,23 @@ create_workenv() {
 		cd $HOME/src/
 	fi
 
-	#TODO: check if this works properly
-	if [[ $repo_invenio && $branch_invenio && $repo_invenio_remote_name ]]; then
+	if [ $repo_invenio ] && [ $branch_invenio ] && [ $repo_invenio_remote_name ]; then
 		if [ ! -d $HOME/src/invenio ]; then
 			git clone --branch $branch_invenio $repo_invenio
 		else
 			cd $HOME/src/invenio
-			branch_exists=`git show-ref refs/heads/$branch_invenio`
-
-			if [[ $repo_invenio == "$(git ls-remote --get-url)" && -n "$branch_exists" ]]; then
-				if [ $branch_invenio != "$(git symbolic-ref --short HEAD 2>/dev/null)"]; then
-					git checkout $branch_invenio
+			# if remote exists
+			if [[ "$(git remote | grep $repo_invenio_remote_name)" ]]; then
+				# if wanted repo is the current one and branch exists
+				branch_exists=`git show-ref refs/heads/$branch_invenio`
+				if [[ $repo_invenio == "$(git ls-remote --get-url)" ]] && [ -n "$branch_exists" ]; then
+					if [[ $branch_invenio != "$(git symbolic-ref --short HEAD 2>/dev/null)" ]]; then
+						git checkout $branch_invenio
+					fi
+				else
+					git fetch $repo_invenio_remote_name $branch_invenio
+					git checkout $repo_invenio_remote_name/$branch_invenio
+					git checkout -b $branch_invenio
 				fi
 			else
 				git remote add $repo_invenio_remote_name $repo_invenio
@@ -118,8 +124,11 @@ create_workenv() {
 	cdvirtualenv
 	mkdir -p var/run/
 	mkdir src; cd src
-	$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $BRANCH
-	$HOME/bin/git-new-workdir $HOME/src/invenio-demosite/ invenio-demosite $BRANCH
+	if [ $branch_invenio ]; then
+		$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $branch_invenio
+	else
+		$HOME/bin/git-new-workdir $HOME/src/invenio/ invenio $BRANCH
+	fi
 }
 
 install_invenio() {
@@ -133,11 +142,12 @@ install_invenio() {
 	if [ $unit_tests == true ]; then
 		pip install nose Flask-Testing httpretty
 	fi
-	python setup.py compile_catalog	npm install
+	python setup.py compile_catalog
 }
 
 install_demosite() {
 	echo "Installing Invenio-Demosite..."
+	$HOME/bin/git-new-workdir $HOME/src/invenio-demosite/ invenio-demosite $BRANCH
 	cdvirtualenv src/invenio-demosite/
 	pip install -r requirements.txt --exists-action i
 	inveniomanage bower -i bower-base.json > bower.json
@@ -146,7 +156,6 @@ install_demosite() {
 
 config_invenio() {
 	echo "Configuring Invenio..."
-	cdvirtualenv src/invenio/
 	inveniomanage config create secret-key
 	inveniomanage config set CFG_EMAIL_BACKEND flask.ext.email.backends.console.Mail
 	inveniomanage config set CFG_BIBSCHED_PROCESS_USER $USER
@@ -163,6 +172,13 @@ config_invenio() {
 	inveniomanage config set UGLIFYJS_BIN `find $PWD/node_modules -iname uglifyjs | head -1`
 	inveniomanage config set REQUIREJS_RUN_IN_DEBUG False
 	inveniomanage config set DEBUG True
+	inveniomanage config set ASSETS_DEBUG True
+	inveniomanage config set DEBUG_TB_INTERCEPT_REDIRECTS False
+	inveniomanage config set DOI_SEARCH_PREFIX "u'doi:'"
+	inveniomanage config set ARXIV_SEARCH_PREFIX "u'035__a:oai:arXiv.org:'"
+	#TODO: add extensions:
+	#from invenio.base.config import EXTENSIONS as _EXTENSIONS
+	#inveniomanage config set EXTENSIONS "_EXTENSIONS + ['invenio.ext.arxiv:Arxiv', 'invenio.ext.crossref:CrossRef']"
 }
 
 setup_demosite() {
@@ -175,13 +191,16 @@ setup_demosite() {
 		inveniomanage database init --user=root --password=mysql --yes-i-know
 	fi
 	inveniomanage database create
+	inveniomanage runserver &
+	inveniomanage demosite populate --packages=invenio_demosite.base
+	fg
 }
 
 config_git() {
 	if [ $git_mail ]; then
 		cdvirtualenv src/invenio
 		git config user.email "$git_mail"
-		cdvirtualenv src/inspire-next
+		cdvirtualenv src/invenio-demosite
 		git config user.email "$git_mail"
 	fi
 }
