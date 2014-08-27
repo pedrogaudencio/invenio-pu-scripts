@@ -147,6 +147,7 @@ install_invenio() {
 
 install_demosite() {
 	echo "Installing Invenio-Demosite..."
+	cdvirtualenv src/
 	$HOME/bin/git-new-workdir $HOME/src/invenio-demosite/ invenio-demosite $BRANCH
 	cdvirtualenv src/invenio-demosite/
 	pip install -r requirements.txt --exists-action i
